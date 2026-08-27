@@ -1,0 +1,18 @@
+# Núcleo Web y Base de Datos
+Django>=5.0
+mysqlclient>=2.2.4
+
+# Sistema de Colas y Caché
+celery>=5.3.6
+redis>=5.0.1
+
+# Procesamiento de PDFs (Satélite Limpiador)
+PyMuPDF>=1.24.1
+
+# Motor RAG y Búsqueda Vectorial
+qdrant-client>=1.8.0
+flashrank>=0.2.8
+
+# Utilidades
+python-dotenv>=1.0.1
+requests>=2.31.0

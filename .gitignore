@@ -1,0 +1,19 @@
+# Entornos y Python
+__pycache__/
+*.py[cod]
+venv/
+env/
+
+# Archivos de entorno y secretos
+.env
+*.sqlite3
+
+# Datos locales y volúmenes (¡Crítico para no subir gigas de información!)
+mariadb_data/
+redis_data/
+qdrant_data/
+n8n_data/
+backend/documentos/
+
+# Archivos de VS Code
+.vscode/
