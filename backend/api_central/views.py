@@ -1,8 +1,9 @@
 import json
-from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from rag_engine.buscador import hacer_pregunta
+import psutil
+from django.shortcuts import render
 
 # --- NUEVA VISTA PARA LA INTERFAZ HTML ---
 def vista_chat(request):
@@ -31,6 +32,23 @@ def endpoint_preguntar(request):
             import traceback
             traceback.print_exc() # Esto imprimirá el error real en la terminal
             return JsonResponse({'error': str(e)}, status=500)
-    
+
     return JsonResponse({'error': 'Método no permitido. Debes usar POST.'}, status=405)
 
+def dashboard_view(request):
+    # 1. Leer métricas reales de hardware (del servidor/contenedor)
+    ram_usage = psutil.virtual_memory().percent
+    disk_usage = psutil.disk_usage('/').percent
+    
+    # 2. Consultar métricas del sistema RAG
+    # TODO: A futuro, esto será un `.count()` a tu base de datos de Redis/MariaDB
+    total_inferencias = 150  # Por ahora usaremos un valor simulado
+    
+    # 3. Empaquetar los datos en un "contexto" para enviarlos al HTML
+    context = {
+        'ram_usage': ram_usage,
+        'disk_usage': disk_usage,
+        'total_inferencias': total_inferencias,
+    }
+    
+    return render(request, 'api_central/dashboard_admin.html', context)
