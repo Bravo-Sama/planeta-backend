@@ -6,6 +6,7 @@ env/
 
 # Archivos de entorno y secretos
 .env
+backend/.env
 *.sqlite3
 
 # Datos locales y volúmenes (¡Crítico para no subir gigas de información!)

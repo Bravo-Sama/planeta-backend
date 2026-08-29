@@ -29,3 +29,4 @@ try:
 
 except Exception as e:
     print(f"\nError al leer la base de datos: {e}")
+    

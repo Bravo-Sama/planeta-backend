@@ -1,14 +1,15 @@
 import os
 from celery import Celery
 
-# Le decimos a Celery qué archivo de configuración de Django usar
+# Le decimos a Celery qué configuraciones de Django usar
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'planeta_project.settings')
 
-# Nombramos nuestra app de Celery como 'planeta'
-app = Celery('planeta')
+# Instanciamos el motor de filas
+app = Celery('planeta_project')
 
-# Le decimos que lea la configuración de Celery desde el settings.py de Django
+# Carga las configuraciones del settings.py usando el prefijo CELERY_
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
-# Esto hace que Celery busque tareas automáticas en tus satélites
+# Busca tareas automáticamente en todos tus satélites (apps)
 app.autodiscover_tasks()
+

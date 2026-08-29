@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat IA - Aguas Décimas</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .chat-container { background: white; width: 100%; max-width: 800px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); padding: 30px; }
+        h1 { color: #2c3e50; text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-bottom: 20px; }
+        .form-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input[type="text"] { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px; }
+        button { background-color: #3498db; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.3s; }
+        button:hover { background-color: #2980b9; }
+        .respuesta-box { background: #ecf0f1; padding: 20px; border-radius: 5px; min-height: 100px; white-space: pre-wrap; line-height: 1.6; color: #333; }
+        .cargando { color: #7f8c8d; font-style: italic; }
+    </style>
+</head>
+<body>
+
+    <div class="chat-container">
+        <h1>Asistente Normativo RAG</h1>
+        
+        <div class="form-group">
+            <input type="text" id="inputPregunta" placeholder="Ej: ¿De qué trata la Norma Chilena NCh2485?">
+            <button onclick="enviarPregunta()">Consultar</button>
+        </div>
+
+        <h3>Respuesta:</h3>
+        <div id="cajaRespuesta" class="respuesta-box">Esperando tu consulta...</div>
+    </div>
+
+    <script>
+        async function enviarPregunta() {
+            const pregunta = document.getElementById('inputPregunta').value;
+            const cajaRespuesta = document.getElementById('cajaRespuesta');
+
+            if (!pregunta.trim()) return;
+
+            cajaRespuesta.innerHTML = '<span class="cargando">Buscando normativas y procesando con Llama 3...</span>';
+
+            try {
+                const response = await fetch('/api/preguntar/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ pregunta: pregunta })
+                });
+
+                if (response.ok) {
+                    // Si tu API devuelve directamente texto o JSON
+                    const data = await response.text();
+                    
+                    // Intentamos parsear si es JSON (dependiendo de cómo lo armaste en views.py)
+                    try {
+                        const json = JSON.parse(data);
+                        cajaRespuesta.textContent = json.respuesta || json.response || data;
+                    } catch {
+                        cajaRespuesta.textContent = data;
+                    }
+                } else {
+                    cajaRespuesta.textContent = "Error de conexión con el servidor.";
+                }
+            } catch (error) {
+                cajaRespuesta.textContent = "Error al enviar la petición.";
+            }
+        }
+    </script>
+</body>
+</html>

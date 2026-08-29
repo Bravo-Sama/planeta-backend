@@ -30,15 +30,21 @@ def hacer_pregunta(pregunta_usuario):
     contexto_recuperado = "\n\n".join([hit.payload['texto'] for hit in resultados])
     print(f"Encontré {len(resultados)} fragmentos útiles. Pensando la respuesta...")
 
-    # 4. Le pedimos a Llama 3 que redacte la respuesta final
+    # 4. Le pedimos a Llama 3 que redacte la respuesta final con el prompt blindado
     prompt_experto = f"""
-    Eres un asistente técnico experto. Responde la pregunta del usuario basándote ÚNICAMENTE en la siguiente información de contexto.
-    Si la respuesta no está en el contexto, di que no tienes esa información.
+    Eres un Ingeniero especialista en normativas de servicios sanitarios trabajando para la empresa de agua potable Aguas Décimas.
+    Tu objetivo es responder de forma técnica, precisa y profesional basándote ÚNICAMENTE en la documentación oficial extraída de la base de datos.
     
-    Contexto:
+    REGLAS ESTRICTAS:
+    1. NO inventes ni supongas información. Si la respuesta no está claramente en el contexto, responde exactamente: "Lo siento, no encuentro información sobre esto en las normativas actuales registradas."
+    2. NO uses frases comerciales, de relleno, ni saludos extensos. Ve directo al dato duro.
+    3. Si la información lo permite, menciona que te basas en el documento o norma referenciada en el texto.
+
+    Contexto Oficial Recuperado (Qdrant):
     {contexto_recuperado}
     
-    Pregunta: {pregunta_usuario}
+    Pregunta del usuario: {pregunta_usuario}
+    Respuesta técnica:
     """
 
     payload = {

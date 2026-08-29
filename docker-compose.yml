@@ -40,6 +40,8 @@ services:
   backend:
     build: ./backend
     container_name: planeta_backend
+    env_file:
+      - ./backend/.env
     # Encendemos el servidor para que escuche hacia el exterior
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
@@ -51,23 +53,8 @@ services:
       - redis
       - qdrant
 
-  # 5. El Orquestador (n8n)
-  n8n:
-    image: docker.n8n.io/n8nio/n8n
-    container_name: planeta_n8n
-    restart: always
-    ports:
-      - "5678:5678"
-    volumes:
-      - n8n_data:/home/node/.n8n
-    environment:
-      - WEBHOOK_URL=https://opulently-angling-atop.ngrok-free.dev
-      - GENERIC_TIMEZONE=America/Santiago
-
 volumes:
   mariadb_data:
   redis_data:
   qdrant_data:
-  # Declaramos el volumen de n8n como externo para que use el que ya tiene tus flujos guardados
-  n8n_data:
-    external: true
+  

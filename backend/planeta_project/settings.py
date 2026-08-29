@@ -10,22 +10,25 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-y41@mqnlwnd(je0_=oym^-qih7lzm47ld&c$uvx+8n!&&_i%!t'
+SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-me')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True').lower() in ('1', 'true', 'yes', 'on')
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 
 
 # Application definition
@@ -40,6 +43,7 @@ INSTALLED_APPS = [
     'api_central',
     'satelite_limpiador',
     'rag_engine',
+    'satelite_telegram',
 ]
 
 MIDDLEWARE = [
@@ -78,11 +82,12 @@ WSGI_APPLICATION = 'planeta_project.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'planeta_db',
-        'USER': 'planeta_user',
-        'PASSWORD': 'planeta_password',
-        'HOST': 'db',  # Este es el nombre del contenedor en Docker
-        'PORT': '3306',
+        'NAME': os.getenv('DB_NAME', 'planeta_db'),
+        'USER': os.getenv('DB_USER', 'planeta_user'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'planeta_password'),
+        'HOST': os.getenv('DB_HOST', 'db'),
+        'PORT': os.getenv('DB_PORT', '3306'),
+        'CONN_MAX_AGE': int(os.getenv('DB_CONN_MAX_AGE', '60')),
     }
 }
 
@@ -108,12 +113,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
-
-TIME_ZONE = 'UTC'
+LANGUAGE_CODE = os.getenv('LANGUAGE_CODE', 'es-cl')
+TIME_ZONE = os.getenv('TIME_ZONE', 'America/Santiago')
 
 USE_I18N = True
-
 USE_TZ = True
 
 
@@ -127,6 +130,24 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Configuración del Sistema de Colas (Celery + Redis)
-CELERY_BROKER_URL = 'redis://redis:6379/0'
-CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
+# --- CREDENCIALES TELEGRAM ---
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+
+# --- CONFIGURACIÓN DE REDIS Y CELERY ---
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/1')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/1')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+
+# --- CONFIGURACIÓN CELERY BEAT (SATÉLITE NOCTURNO) ---
+if os.getenv('ENABLE_CELERY_BEAT', 'False').lower() in ('1', 'true', 'yes', 'on'):
+    from celery.schedules import crontab
+    CELERY_BEAT_SCHEDULE = {
+        'vectorizacion-nocturna-pdfs': {
+            'task': 'satelite_telegram.tasks.procesar_documentos_pendientes',
+            'schedule': crontab(minute=0, hour=3),
+        },
+    }
+else:
+    CELERY_BEAT_SCHEDULE = {}
