@@ -24,7 +24,7 @@ def obtener_embedding(texto):
         "model": "nomic-embed-text",
         "prompt": texto
     }
-    respuesta = requests.post(OLLAMA_URL, json=payload)
+    respuesta = requests.post(OLLAMA_URL, json=payload, timeout=(5, 30))
     if respuesta.status_code == 200:
         return respuesta.json()["embedding"]
     print(f"Error al conectar con Ollama: {respuesta.text}")

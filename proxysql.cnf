@@ -1,0 +1,34 @@
+datadir="/var/lib/proxysql"
+errorlog="/var/log/proxysql/proxysql.log"
+
+admin_variables = {
+    admin_credentials = "admin:admin"
+    mysql_ifaces = "0.0.0.0:6032"
+    refresh_interval = 2000
+}
+
+mysql_variables = {
+    interfaces = "0.0.0.0:6033"
+    default_query_delay = 0
+    default_query_timeout = 36000000
+    max_connections = 200
+    default_charset = "utf8mb4"
+    mysql_wait_timeout = 600
+    mysql_connect_timeout_server = 3000
+    mysql_sql_log_bin = 0
+    monitor_username = "planeta_user"
+    monitor_password = "planeta_password"
+    monitor_ping_interval = 2000
+}
+
+mysql_servers = (
+    { address = "db", port = 3306, hostgroup = 0, max_connections = 200, comment = "MariaDB primary" }
+)
+
+mysql_users = (
+    { username = "planeta_user", password = "planeta_password", default_hostgroup = 0, max_connections = 100, transaction_persistent = 1 }
+)
+
+mysql_query_rules = (
+    { rule_id = 1, active = 1, match_pattern = ".*", destination_hostgroup = 0, apply = 1 }
+)

@@ -25,7 +25,7 @@ def obtener_embedding_local(texto):
         respuesta = requests.post(OLLAMA_URL, json={
             "model": "nomic-embed-text",
             "prompt": texto
-        })
+        }, timeout=(5, 30))
         if respuesta.status_code == 200:
             return respuesta.json().get('embedding')
         return None

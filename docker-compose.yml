@@ -5,7 +5,7 @@ services:
   db:
     image: mariadb:10.11
     container_name: planeta_db
-    restart: always
+    restart: on-failure:5
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_DATABASE: planeta_db
@@ -15,26 +15,95 @@ services:
       - "3306:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
+    oom_score_adj: 200
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+
+  # 1.1. ProxySQL local para desacoplar Django y Celery del puerto de MariaDB
+  proxysql:
+    image: proxysql/proxysql:2.5
+    container_name: planeta_db_proxy
+    depends_on:
+      - db
+    ports:
+      - "6033:6033"
+    volumes:
+      - ./proxysql.cnf:/etc/proxysql.cnf:ro
+    command: ["--config-file=/etc/proxysql.cnf"]
+    restart: on-failure:5
+    oom_score_adj: 200
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
 
   # 2. Caché Semántico y Colas (Redis)
   redis:
     image: redis:7-alpine
     container_name: planeta_redis
-    restart: always
+    restart: on-failure:5
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    oom_score_adj: 200
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.15'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
 
   # 3. Base de Datos Vectorial para RAG (Qdrant)
   qdrant:
     image: qdrant/qdrant:latest
     container_name: planeta_qdrant
-    restart: always
+    restart: on-failure:5
     ports:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
+    oom_score_adj: 200
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1.5G
+        reservations:
+          cpus: '0.35'
+          memory: 768M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
 
   # 4. El Núcleo Central (Django)
   backend:
@@ -42,16 +111,117 @@ services:
     container_name: planeta_backend
     env_file:
       - ./backend/.env
-    # Encendemos el servidor para que escuche hacia el exterior
-    command: python manage.py runserver 0.0.0.0:8000
+    command: gunicorn planeta_project.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120
     volumes:
       - ./backend:/app
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     depends_on:
       - db
+      - proxysql
       - redis
       - qdrant
+    restart: on-failure:5
+    oom_score_adj: 200
+    environment:
+      PYTHONMALLOC: malloc
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 1G
+        reservations:
+          cpus: '0.20'
+          memory: 384M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: planeta_nginx
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: on-failure:5
+    oom_score_adj: 200
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+
+  # 5. Worker asíncrono de Celery
+  planeta_celery_worker:
+    build: ./backend
+    container_name: planeta_celery_worker
+    command: celery -A planeta_project worker -l info -c 4
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+      - db
+      - proxysql
+      - qdrant
+    restart: on-failure:5
+    oom_score_adj: 250
+    environment:
+      PYTHONMALLOC: malloc
+      CELERY_WORKER_CONCURRENCY: "4"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1.5G
+        reservations:
+          cpus: '0.35'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+
+  # 6. Satélite Nocturno (Celery Beat)
+  planeta_celery_beat:
+    build: ./backend
+    container_name: planeta_celery_beat
+    command: celery -A planeta_project beat -l info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+      - db
+    restart: on-failure:5
+    oom_score_adj: 200
+    environment:
+      PYTHONMALLOC: malloc
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 768M
+        reservations:
+          cpus: '0.15'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
 
 volumes:
   mariadb_data:
