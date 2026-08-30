@@ -38,6 +38,7 @@ def endpoint_preguntar(request):
 def dashboard_view(request):
     # 1. Leer métricas reales de hardware (del servidor/contenedor)
     ram_usage = psutil.virtual_memory().percent
+    
     disk_usage = psutil.disk_usage('/').percent
     
     # 2. Consultar métricas del sistema RAG
@@ -49,6 +50,5 @@ def dashboard_view(request):
         'ram_usage': ram_usage,
         'disk_usage': disk_usage,
         'total_inferencias': total_inferencias,
-    }
-    
+    } 
     return render(request, 'api_central/dashboard_admin.html', context)
