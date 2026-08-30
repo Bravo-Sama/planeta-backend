@@ -13,7 +13,7 @@
                 <h5 class="card-title text-secondary"><i class="bi bi-memory"></i> Uso de RAM</h5>
                 <h2 class="mt-3">{{ ram_usage }}%</h2>
                 <div class="progress mt-2" style="height: 5px;">
-                    <div class="progress-bar bg-primary" role="progressbar" style="width: {{ ram_usage }}%;"></div>
+                    <div class="progress-bar bg-primary" role="progressbar" style="width: {{ ram_usage|default:'0' }}%;" aria-valuenow="{{ ram_usage|default:'0' }}" aria-valuemin="0" aria-valuemax="100"></div>
                 </div>
             </div>
         </div>

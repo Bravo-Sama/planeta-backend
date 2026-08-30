@@ -1,0 +1,354 @@
+{% extends 'api_central/base.html' %}
+
+{% block title %}Gestión de Usuarios | Admin IA{% endblock %}
+{% block page_title %}Usuarios del Sistema{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h5 class="text-secondary">Funcionarios Registrados</h5>
+    
+    <!-- NUEVO BOTÓN: Ahora abre el Modal en lugar de ir a otra página -->
+    <button type="button" class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#modalNuevoUsuario">
+        <i class="bi bi-person-plus-fill me-2"></i> Nuevo Funcionario
+    </button>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-4">Usuario</th>
+                        <th>Correo Electrónico</th>
+                        <th>Estado</th>
+                        <th>Fecha de Registro</th>
+                        <th class="text-end pe-4">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in usuarios %}
+                    <tr>
+                        <td class="ps-4"><strong>{{ user.username }}</strong></td>
+                        <td>{{ user.email|default:"Sin correo" }}</td>
+                        <td>
+                            {% if user.is_active %}
+                                <span class="badge bg-success bg-opacity-10 text-success border border-success-subtle">Activo</span>
+                            {% else %}
+                                <span class="badge bg-warning bg-opacity-10 text-warning border border-warning-subtle">Pausado</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ user.date_joined|date:"d/m/Y" }}</td>
+                        <td class="text-end pe-4">
+                            <!-- Botón Editar (abre un modal e inyecta los datos) -->
+                            <button class="btn btn-sm btn-light me-1" title="Editar" 
+                                    data-bs-toggle="modal" data-bs-target="#modalEditarUsuario"
+                                    data-id="{{ user.id }}" 
+                                    data-username="{{ user.username }}" 
+                                    data-email="{{ user.email }}">
+                                <i class="bi bi-pencil text-primary"></i>
+                            </button>
+                            <!-- Botón Cambiar Contraseña -->
+                            <button class="btn btn-sm btn-light me-1" title="Cambiar Contraseña" 
+                                    data-bs-toggle="modal" data-bs-target="#modalCambiarPassword"
+                                    data-id="{{ user.id }}" 
+                                    data-username="{{ user.username }}">
+                                <i class="bi bi-key text-secondary"></i>
+                            </button>
+                            <!-- Botón Pausar / Activar -->
+                            <a href="{% url 'accion_usuario' user.id 'pausar' %}" class="btn btn-sm btn-light me-1" title="Pausar/Activar">
+                                {% if user.is_active %}
+                                    <i class="bi bi-pause-circle text-warning"></i>
+                                {% else %}
+                                    <i class="bi bi-play-circle text-success"></i>
+                                {% endif %}
+                            </a>
+                            
+                            <!-- Botón Eliminar (Con alerta de confirmación) -->
+                            <a href="{% url 'accion_usuario' user.id 'eliminar' %}" class="btn btn-sm btn-light" title="Eliminar" 
+                            onclick="return confirm('¿Estás seguro de que deseas eliminar permanentemente al usuario {{ user.username }}?');">
+                                <i class="bi bi-trash text-danger"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">No hay funcionarios registrados en el sistema.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL FLOTANTE PARA NUEVO USUARIO          -->
+<!-- ========================================== -->
+<div class="modal fade" id="modalNuevoUsuario" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header border-bottom-0 pb-0">
+        <h5 class="modal-title text-secondary"><i class="bi bi-person-badge"></i> Alta de Nuevo Usuario</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-4">
+        
+        <!-- Caja de error oculta por defecto -->
+        <div id="alertaError" class="alert alert-danger d-none" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i> <span id="textoError"></span>
+        </div>
+
+        <form id="formNuevoUsuario">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label text-muted small">Nombre de Usuario (RUT o Apellido)</label>
+                <input type="text" class="form-control" name="username" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label text-muted small">Correo Corporativo</label>
+                <input type="email" class="form-control" name="email" placeholder="ejemplo@tuempresa.cl" required>
+            </div>
+            <div class="mb-4">
+                <label class="form-label text-muted small">Contraseña Inicial</label>
+                <input type="password" class="form-control" name="password" required>
+            </div>
+            <div class="d-flex justify-content-end">
+                <button type="button" class="btn btn-light me-2" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-primary" id="btnGuardar">Crear Cuenta</button>
+            </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========================================== -->
+<!-- MODAL FLOTANTE PARA CAMBIAR CONTRASEÑA     -->
+<!-- ========================================== -->
+<div class="modal fade" id="modalCambiarPassword" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm"> <!-- modal-sm lo hace más angosto y elegante -->
+    <div class="modal-content">
+      <div class="modal-header border-bottom-0 pb-0">
+        <h5 class="modal-title text-secondary"><i class="bi bi-key-fill"></i> Nueva Clave</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-4">
+        
+        <p class="text-muted small mb-3">Actualizando acceso para: <strong id="passUsername" class="text-dark"></strong></p>
+
+        <div id="alertaErrorPass" class="alert alert-danger d-none" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i> <span id="textoErrorPass"></span>
+        </div>
+
+        <form id="formCambiarPassword">
+            {% csrf_token %}
+            <div class="mb-4">
+                <input type="password" class="form-control" name="new_password" placeholder="Escribe la nueva contraseña" required minlength="6">
+            </div>
+            <div class="d-flex justify-content-end">
+                <button type="button" class="btn btn-light me-2" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-warning" id="btnGuardarPass">Actualizar</button>
+            </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL FLOTANTE PARA EDITAR USUARIO         -->
+<!-- ========================================== -->
+<div class="modal fade" id="modalEditarUsuario" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header border-bottom-0 pb-0">
+        <h5 class="modal-title text-secondary"><i class="bi bi-pencil-square"></i> Editar Funcionario</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-4">
+        
+        <div id="alertaErrorEditar" class="alert alert-danger d-none" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i> <span id="textoErrorEditar"></span>
+        </div>
+
+        <form id="formEditarUsuario">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label text-muted small">Nombre de Usuario</label>
+                <!-- Usamos IDs específicos para que JS los llene solos -->
+                <input type="text" class="form-control" name="username" id="editUsername" required>
+            </div>
+            <div class="mb-4">
+                <label class="form-label text-muted small">Correo Corporativo</label>
+                <input type="email" class="form-control" name="email" id="editEmail" required>
+            </div>
+            <div class="d-flex justify-content-end">
+                <button type="button" class="btn btn-light me-2" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-primary" id="btnGuardarEditar">Actualizar Datos</button>
+            </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========================================== -->
+<!-- JAVASCRIPT: LÓGICA DEL FORMULARIO          -->
+<!-- ========================================== -->
+<script>
+document.getElementById('formNuevoUsuario').addEventListener('submit', function(e) {
+    e.preventDefault(); // Frena el envío tradicional para que no recargue la página
+    
+    let form = this;
+    let formData = new FormData(form);
+    let btnGuardar = document.getElementById('btnGuardar');
+    let alertaError = document.getElementById('alertaError');
+    let textoError = document.getElementById('textoError');
+    
+    // Estado de "Cargando..."
+    btnGuardar.disabled = true;
+    btnGuardar.innerHTML = 'Guardando...';
+    alertaError.classList.add('d-none'); 
+    
+    fetch("{% url 'crear_usuario' %}", {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if(data.success) {
+            // ¡Exito! Recargamos la tabla para ver al nuevo usuario
+            window.location.reload();
+        } else {
+            // Error de validación: lo mostramos dentro del Modal
+            textoError.innerText = data.error;
+            alertaError.classList.remove('d-none');
+            btnGuardar.disabled = false;
+            btnGuardar.innerHTML = 'Crear Cuenta';
+        }
+    });
+});
+</script>
+
+<!-- ========================================== -->
+<!-- SCRIPT PARA EDITAR USUARIOS                -->
+<!-- ========================================== -->
+<script>
+// 1. Cuando se abre el modal, rellenamos los datos del usuario automáticamente
+let modalEditar = document.getElementById('modalEditarUsuario');
+let urlEditarBase = "/usuarios/editar/"; // Ruta base a la que le pegaremos el ID
+
+modalEditar.addEventListener('show.bs.modal', function (event) {
+    let button = event.relatedTarget; // El botón que disparó el modal
+    
+    // Extraemos los datos ocultos en el botón
+    let id = button.getAttribute('data-id');
+    let username = button.getAttribute('data-username');
+    let email = button.getAttribute('data-email');
+    
+    // Rellenamos el formulario visualmente
+    document.getElementById('editUsername').value = username;
+    document.getElementById('editEmail').value = email;
+    
+    // Le decimos al formulario a qué URL exacta debe enviar los datos
+    document.getElementById('formEditarUsuario').action = urlEditarBase + id + "/";
+    
+    // Limpiamos alertas previas por si acaso
+    document.getElementById('alertaErrorEditar').classList.add('d-none');
+});
+
+// 2. Enviamos los datos por Fetch (AJAX) igual que en crear
+document.getElementById('formEditarUsuario').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    let form = this;
+    let formData = new FormData(form);
+    let btnGuardar = document.getElementById('btnGuardarEditar');
+    let alertaError = document.getElementById('alertaErrorEditar');
+    let textoError = document.getElementById('textoErrorEditar');
+    
+    btnGuardar.disabled = true;
+    btnGuardar.innerHTML = 'Actualizando...';
+    alertaError.classList.add('d-none'); 
+    
+    fetch(form.action, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if(data.success) {
+            window.location.reload(); // Éxito: recargamos la tabla
+        } else {
+            // Error: mostramos la alerta en el modal
+            textoError.innerText = data.error;
+            alertaError.classList.remove('d-none');
+            btnGuardar.disabled = false;
+            btnGuardar.innerHTML = 'Actualizar Datos';
+        }
+    });
+});
+
+// ==========================================
+// SCRIPT PARA CAMBIAR CONTRASEÑA
+// ==========================================
+let modalPass = document.getElementById('modalCambiarPassword');
+let urlPassBase = "/usuarios/password/";
+
+modalPass.addEventListener('show.bs.modal', function (event) {
+    let button = event.relatedTarget;
+    let id = button.getAttribute('data-id');
+    let username = button.getAttribute('data-username');
+    
+    document.getElementById('passUsername').innerText = username;
+    document.getElementById('formCambiarPassword').action = urlPassBase + id + "/";
+    document.getElementById('alertaErrorPass').classList.add('d-none');
+    document.getElementById('formCambiarPassword').reset(); // Limpia la caja de texto
+});
+
+document.getElementById('formCambiarPassword').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    let form = this;
+    let formData = new FormData(form);
+    let btnGuardar = document.getElementById('btnGuardarPass');
+    let alertaError = document.getElementById('alertaErrorPass');
+    let textoError = document.getElementById('textoErrorPass');
+    
+    btnGuardar.disabled = true;
+    btnGuardar.innerHTML = 'Guardando...';
+    alertaError.classList.add('d-none'); 
+    
+    fetch(form.action, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if(data.success) {
+            window.location.reload(); // Éxito: recargamos la página
+        } else {
+            // Error
+            textoError.innerText = data.error;
+            alertaError.classList.remove('d-none');
+            btnGuardar.disabled = false;
+            btnGuardar.innerHTML = 'Actualizar';
+        }
+    });
+});
+</script>
+
+{% endblock %}
+
