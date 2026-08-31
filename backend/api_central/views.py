@@ -179,7 +179,44 @@ def cambiar_password_view(request, usuario_id):
         usuario.save()
         
         return JsonResponse({'success': True})
-    
+
+
+# --- VISTAS DEL PROTOTIPO FUNCIONAL DEL PANEL ---
+@login_required(login_url='/login/')
+def subida_documentos_view(request):
+    return render(request, 'api_central/subida_documentos.html')
+
+
+@login_required(login_url='/login/')
+def gestion_rag_view(request):
+    return render(request, 'api_central/gestion_rag.html')
+
+
+@login_required(login_url='/login/')
+def faq_sistema_view(request):
+    return render(request, 'api_central/faq_sistema.html')
+
+
+@login_required(login_url='/login/')
+def historial_chats_view(request):
+    return render(request, 'api_central/historial_chats.html')
+
+
+@login_required(login_url='/login/')
+def configuracion_ia_view(request):
+    return render(request, 'api_central/configuracion_ia.html')
+
+
+def registro_view(request):
+    return render(request, 'api_central/registro.html')
+
+
+def recuperar_password_view(request):
+    return render(request, 'api_central/recuperar_password.html')
+
+
+def reset_password_view(request):
+    return render(request, 'api_central/reset.html')
     
     
 # --- VISTAS DE ERROR PERSONALIZADAS ---

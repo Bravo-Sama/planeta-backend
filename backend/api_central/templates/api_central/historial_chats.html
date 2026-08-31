@@ -1,0 +1,55 @@
+{% extends 'api_central/base.html' %}
+
+{% block title %}Historial de chats | Admin IA{% endblock %}
+{% block page_title %}Auditoría de conversaciones{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm border-0">
+    <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="text-secondary mb-0"><i class="bi bi-chat-left-text me-2"></i>Historial de consultas</h5>
+            <div class="input-group w-auto">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" class="form-control" placeholder="Buscar conversación">
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Usuario</th>
+                        <th>Pregunta</th>
+                        <th>Respuesta</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>31/08/2026 08:42</td>
+                        <td>+56 9 1234 5678</td>
+                        <td>¿Qué documentos requieren revisión?</td>
+                        <td>Se revisan documentos ...</td>
+                        <td><span class="badge bg-success">Aceptado</span></td>
+                    </tr>
+                    <tr>
+                        <td>31/08/2026 08:13</td>
+                        <td>+56 9 7654 3210</td>
+                        <td>¿Cuánto dura la revisión?</td>
+                        <td>La revisión suele tomar ...</td>
+                        <td><span class="badge bg-warning text-dark">Revisión</span></td>
+                    </tr>
+                    <tr>
+                        <td>30/08/2026 21:05</td>
+                        <td>Admin</td>
+                        <td>¿Cuál es la norma de referencia?</td>
+                        <td>La norma indicada es ...</td>
+                        <td><span class="badge bg-danger">Alerta</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

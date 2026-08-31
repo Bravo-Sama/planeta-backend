@@ -3,11 +3,17 @@ __pycache__/
 *.py[cod]
 venv/
 env/
+.venv/
+.pytest_cache/
+backend/.pytest_cache/
+backend/__pycache__/
+backend/.venv/
 
 # Archivos de entorno y secretos
 .env
 backend/.env
 *.sqlite3
+*.log
 
 # Datos locales y volúmenes (¡Crítico para no subir gigas de información!)
 mariadb_data/
@@ -15,6 +21,7 @@ redis_data/
 qdrant_data/
 n8n_data/
 backend/documentos/
+backend/celerybeat-schedule
 
 # Archivos de VS Code
 .vscode/

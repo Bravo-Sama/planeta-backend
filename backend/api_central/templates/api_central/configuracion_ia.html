@@ -1,0 +1,79 @@
+{% extends 'api_central/base.html' %}
+
+{% block title %}Configuración IA | Admin IA{% endblock %}
+{% block page_title %}Configuración del motor de inferencia{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-xl-7">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-body p-4">
+                <h5 class="text-secondary mb-3"><i class="bi bi-sliders me-2"></i>Parámetros operativos</h5>
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label small text-muted">Modelo base</label>
+                            <select class="form-select">
+                                <option selected>llama3</option>
+                                <option>llama3.1</option>
+                                <option>mistral</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small text-muted">Modelo de embeddings</label>
+                            <select class="form-select">
+                                <option selected>nomic-embed-text</option>
+                                <option>mxbai-embed-large</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small text-muted">Temperatura</label>
+                            <input type="number" class="form-control" value="0.2" step="0.1" min="0" max="1">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small text-muted">Tamaño de chunk</label>
+                            <input type="number" class="form-control" value="700" min="200" max="2000">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label small text-muted">System prompt</label>
+                            <textarea class="form-control" rows="5">Responde como asesora técnica sanitaria, considerando normativas vigentes, y cuando no tengas certeza indica que solicita revisión humana.</textarea>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-save me-2"></i>Guardar configuración
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-5">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-body p-4">
+                <h5 class="text-secondary mb-3"><i class="bi bi-broadcast me-2"></i>Estado del motor</h5>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Ollama
+                        <span class="badge bg-success">Online</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Qdrant
+                        <span class="badge bg-success">Online</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        Redis
+                        <span class="badge bg-warning text-dark">Latencia elevada</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        MariaDB
+                        <span class="badge bg-success">Estable</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

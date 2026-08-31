@@ -1,0 +1,74 @@
+{% extends 'api_central/base.html' %}
+
+{% block title %}FAQ del sistema | Admin IA{% endblock %}
+{% block page_title %}Base de respuestas frecuentes{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-xl-5">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-body p-4">
+                <h5 class="text-secondary mb-3"><i class="bi bi-question-circle me-2"></i>Nueva respuesta frecuente</h5>
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Pregunta estándar</label>
+                        <input type="text" class="form-control" placeholder="Ej: ¿Qué es la norma... ?" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-muted">Respuesta aprobada</label>
+                        <textarea class="form-control" rows="6" placeholder="Escribe la respuesta oficial o la versión canónica..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100">
+                        <i class="bi bi-check2-circle me-2"></i>Guardar FAQ
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-7">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-body p-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="text-secondary mb-0"><i class="bi bi-list-check me-2"></i>FAQ activa</h5>
+                    <span class="badge bg-success-subtle text-success border border-success-subtle">Ahorro estimado: 28%</span>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Pregunta</th>
+                                <th>Usos</th>
+                                <th>Estado</th>
+                                <th class="text-end">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>¿Cuál es el plazo máximo de respuesta?</td>
+                                <td>142</td>
+                                <td><span class="badge bg-success">Activo</span></td>
+                                <td class="text-end"><button class="btn btn-sm btn-light">Editar</button></td>
+                            </tr>
+                            <tr>
+                                <td>¿Qué documentos requieren validación?</td>
+                                <td>81</td>
+                                <td><span class="badge bg-success">Activo</span></td>
+                                <td class="text-end"><button class="btn btn-sm btn-light">Editar</button></td>
+                            </tr>
+                            <tr>
+                                <td>¿Cómo se clasifican las solicitudes?</td>
+                                <td>65</td>
+                                <td><span class="badge bg-warning text-dark">Revisión</span></td>
+                                <td class="text-end"><button class="btn btn-sm btn-light">Editar</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

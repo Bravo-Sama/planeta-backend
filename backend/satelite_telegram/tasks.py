@@ -1,13 +1,15 @@
 """Módulo de Tareas Asíncronas (Celery) para el Satélite Telegram.
 
 Gestiona las tareas pesadas de inferencia de IA en segundo plano.
-Implementa escritura en Caché Volátil (Redis) para reciclar respuestas.
-Además, controla el Satélite Nocturno para la vectorización diferida de PDFs.
+Implementa idempotencia estricta, tolerancia a fallos, streaming controlado
+y patrón Write-Behind para desacoplar MariaDB del flujo del usuario.
 """
 
+import json
 import logging
 import time
 import uuid
+import hashlib
 
 import requests
 import redis
@@ -20,7 +22,6 @@ from rag_engine.orquestador import procesar_consulta_orquestada
 from seguridad.ofuscador import enmascarar_datos_sensibles
 from tenacity import (
     retry,
-    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
@@ -36,55 +37,35 @@ redis_client = redis.Redis(
     decode_responses=True,
 )
 
-# Tiempo de vida del caché en segundos (2 horas)
 TIEMPO_EXPIRACION_CACHE = 7200
 
 
 def registrar_consulta_sanitizada(chat_id, texto_usuario, respuesta_ia=None, request_id=None):
-    """Guarda en RegistroConsulta texto anónimo del usuario y respuesta IA, si existe el modelo."""
+    """
+    Patrón Write-Behind: No toca MariaDB en tiempo real. 
+    Empuja el registro a una cola de Redis en O(1) milisegundos.
+    """
     texto_seguro = enmascarar_datos_sensibles(texto_usuario or "")
     respuesta_segura = enmascarar_datos_sensibles(respuesta_ia or "")
+    
+    payload = {
+        "chat_id": chat_id,
+        "texto_usuario": texto_seguro,
+        "respuesta_ia": respuesta_segura,
+        "request_id": request_id,
+        "timestamp": time.time()
+    }
+    
     try:
-        from satelite_telegram.models import RegistroConsulta
-    except ImportError:
-        return texto_seguro
-
-    if RegistroConsulta is None:
-        return texto_seguro
-
-    try:
-        campos = [field.name for field in RegistroConsulta._meta.get_fields()]
-        kwargs = {}
-        for campo in ['chat_id', 'usuario_id', 'usuario', 'consulta', 'texto', 'mensaje', 'texto_usuario', 'texto_ingresado', 'pregunta']:
-            if campo in campos:
-                kwargs[campo] = texto_seguro
-                break
-        for campo in ['respuesta', 'respuesta_ia', 'respuestaIA', 'resultado', 'contenido', 'texto_respuesta']:
-            if campo in campos:
-                kwargs[campo] = respuesta_segura
-                break
-        if not kwargs:
-            return texto_seguro
-        if 'chat_id' in campos and chat_id is not None:
-            kwargs.setdefault('chat_id', chat_id)
-        if request_id is not None and 'request_id' in campos:
-            kwargs['request_id'] = request_id
-        RegistroConsulta.objects.create(**kwargs)
-    except Exception as exc:  # pragma: no cover - fall-back defensivo
-        logger.error(
-            "No se pudo persistir la consulta anonimizada. request_id=%s chat_id=%s error=%s",
-            request_id,
-            chat_id,
-            str(exc),
-        )
+        # Lpush encola el log en la lista "cola_logs_mariadb" de Redis
+        redis_client.lpush("cola_logs_mariadb", json.dumps(payload))
+    except Exception as exc:
+        logger.error(f"[{request_id}] Fallo crítico en Redis al encolar log: {str(exc)}")
+        
     return texto_seguro
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(min=2, max=10),
-    reraise=True,
-)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10), reraise=True)
 def enviar_peticion_telegram(payload, endpoint):
     """Envía una petición a Telegram con reintentos y backoff exponencial."""
     url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/{endpoint}"
@@ -95,209 +76,188 @@ def enviar_peticion_telegram(payload, endpoint):
     return respuesta
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(min=2, max=10),
-    reraise=True,
-)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10), reraise=True)
 def enviar_mensaje_final(chat_id, texto):
-    """Fallback final con sendMessage y reintentos exponenciales."""
+    """Fallback final garantizado."""
     return enviar_peticion_telegram({'chat_id': chat_id, 'text': texto}, 'sendMessage')
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, soft_time_limit=45, max_retries=3)
 def procesar_mensaje_ia(self, chat_id, texto_usuario, request_id=None):
-    """Procesa consultas con streaming seguro y fallback a sendMessage si Telegram falla."""
+    """Tarea inmortal: Tolerancia a fallos, idempotencia y streaming seguro."""
     request_id = request_id or str(uuid.uuid4())
     texto_seguro = enmascarar_datos_sensibles(texto_usuario)
-    texto_guardado = registrar_consulta_sanitizada(chat_id, texto_seguro, request_id=request_id)
+    
+    # 1. Deduplicación Estricta (Idempotencia)
+    hash_consulta = hashlib.md5(f"{chat_id}:{texto_seguro}".encode('utf-8')).hexdigest()
+    key_idempotencia = f"consulta:estado:{hash_consulta}"
+    
+    if redis_client.exists(key_idempotencia):
+        logger.warning(f"[{request_id}] Consulta duplicada detectada y bloqueada en red ({hash_consulta}).")
+        return "Duplicado descartado"
+
+    redis_client.setex(key_idempotencia, 60, "procesando")
+    
+    # Variables de estado controladas
     message_id = None
     streaming_activo = True
     buffer = ""
     respuesta_final = ""
     lock_key = f'lock_chat_{chat_id}'
+    caracteres_desde_ultima_edicion = 0
 
     try:
+        # Aislamos MariaDB (Write-behind asíncrono)
+        registrar_consulta_sanitizada(chat_id, texto_seguro, request_id=request_id)
+        
         with redis_client.lock(lock_key, timeout=45, blocking_timeout=5):
-            logger.info(
-                "Procesando consulta RAG. request_id=%s chat_id=%s texto=%s",
-                request_id,
-                chat_id,
-                texto_seguro,
-            )
+            # 2. Envío de Placeholder
             try:
-                respuesta_inicial = enviar_peticion_telegram(
-                    {'chat_id': chat_id, 'text': 'Buscando en normativas...'},
-                    'sendMessage',
-                )
-            except requests.exceptions.RequestException as exc:
-                logger.warning(
-                    "Telegram sendMessage inicial falló. request_id=%s chat_id=%s error=%s streaming_activo=False",
-                    request_id,
-                    chat_id,
-                    str(exc),
-                )
-                streaming_activo = False
-                respuesta_inicial = None
-
-            if streaming_activo and respuesta_inicial is not None:
-                if respuesta_inicial.status_code != 200:
-                    logger.warning(
-                        "Telegram initial send returned status %s. request_id=%s chat_id=%s streaming_activo=False",
-                        getattr(respuesta_inicial, 'status_code', 'N/A'),
-                        request_id,
-                        chat_id,
-                    )
+                resp_inicial = enviar_peticion_telegram({'chat_id': chat_id, 'text': 'Buscando en normativas...'}, 'sendMessage')
+                message_id = resp_inicial.json().get('result', {}).get('message_id')
+                if not message_id:
                     streaming_activo = False
-                else:
-                    try:
-                        payload = respuesta_inicial.json()
-                        result = payload.get('result', {}) if isinstance(payload, dict) else {}
-                        message_id = result.get('message_id')
-                        if message_id is None:
-                            logger.warning(
-                                "Telegram initial send missing message_id. request_id=%s chat_id=%s streaming_activo=False",
-                                request_id,
-                                chat_id,
-                            )
-                            streaming_activo = False
-                    except (ValueError, TypeError, AttributeError, KeyError) as exc:
-                        logger.warning(
-                            "Telegram initial payload invalid. request_id=%s chat_id=%s error=%s streaming_activo=False",
-                            request_id,
-                            chat_id,
-                            str(exc),
-                        )
-                        streaming_activo = False
+            except Exception as exc:
+                logger.warning(f"[{request_id}] Fallo inicial Telegram: {str(exc)}")
+                streaming_activo = False
 
+            # 3. Flujo RAG con Streaming Protegido
             for token in procesar_consulta_orquestada(texto_seguro, chat_id):
                 if not token:
                     continue
                 buffer += str(token)
+                caracteres_desde_ultima_edicion += len(str(token))
 
-                if streaming_activo and message_id is not None:
+                # Throttle API Telegram: Editamos máximo cada 150 caracteres
+                if streaming_activo and message_id and caracteres_desde_ultima_edicion >= 150:
                     try:
-                        enviar_peticion_telegram(
-                            {'chat_id': chat_id, 'message_id': message_id, 'text': buffer},
-                            'editMessageText',
-                        )
-                    except requests.exceptions.RequestException as exc:
-                        logger.warning(
-                            "editMessageText falló; se desactiva streaming. request_id=%s chat_id=%s error=%s",
-                            request_id,
-                            chat_id,
-                            str(exc),
-                        )
-                        streaming_activo = False
-                        message_id = None
+                        enviar_peticion_telegram({'chat_id': chat_id, 'message_id': message_id, 'text': buffer}, 'editMessageText')
+                        caracteres_desde_ultima_edicion = 0
+                    except Exception:
+                        streaming_activo = False # Si falla la edición, apagamos el streaming para no banearnos
 
-            respuesta_final = buffer.strip() or 'No pude generar una respuesta válida.'
-            respuesta_final_segura = enmascarar_datos_sensibles(respuesta_final)
-            registrar_consulta_sanitizada(chat_id, texto_seguro, respuesta_ia=respuesta_final_segura, request_id=request_id)
+            respuesta_final = buffer.strip() or "No pude generar una respuesta válida."
 
-            if streaming_activo and message_id is not None:
-                try:
-                    enviar_peticion_telegram(
-                        {'chat_id': chat_id, 'message_id': message_id, 'text': respuesta_final_segura},
-                        'editMessageText',
-                    )
-                except requests.exceptions.RequestException as exc:
-                    logger.warning(
-                        "Fallo al editar el mensaje final. request_id=%s chat_id=%s error=%s fallback=sendMessage",
-                        request_id,
-                        chat_id,
-                        str(exc),
-                    )
-                    streaming_activo = False
-
-            if not streaming_activo:
-                try:
-                    enviar_mensaje_final(chat_id, respuesta_final_segura)
-                except requests.exceptions.RequestException as exc:
-                    logger.error(
-                        "Fallback final sendMessage falló. request_id=%s chat_id=%s error=%s",
-                        request_id,
-                        chat_id,
-                        str(exc),
-                    )
-
-            redis_client.setex(f"cache_q:{texto_seguro.lower().strip()}", TIEMPO_EXPIRACION_CACHE, respuesta_final_segura)
-
+    except redis.exceptions.LockError:
+        respuesta_final = "Por favor, espera a que termine de responder tu consulta anterior."
+        streaming_activo = False
+        
     except SoftTimeLimitExceeded:
-        respuesta_final = 'El servidor de IA está saturado en este momento. Intente en unos minutos.'
-        logger.warning(
-            "SoftTimeLimitExceeded. request_id=%s chat_id=%s query=%s timeout_warning=%s",
-            request_id,
-            chat_id,
-            texto_seguro,
-            respuesta_final,
-        )
-        try:
-            enviar_mensaje_final(chat_id, enmascarar_datos_sensibles(respuesta_final))
-        except requests.exceptions.RequestException as exc:
-            logger.error(
-                "No se pudo enviar el aviso de timeout a Telegram. request_id=%s chat_id=%s error=%s",
-                request_id,
-                chat_id,
-                str(exc),
-            )
-        return
-
+        respuesta_final = "El sistema de IA está procesando demasiadas consultas. Intenta en unos minutos."
+        streaming_activo = False
+        logger.error(f"[{request_id}] SoftTimeLimitExceeded alcanzado.")
+        
     except Exception as exc:
-        logger.error(
-            "Falló la tarea de IA. request_id=%s chat_id=%s error=%s",
-            request_id,
-            chat_id,
-            str(exc),
-        )
-        return
+        respuesta_final = "El motor de inteligencia artificial se encuentra en modo degradado."
+        streaming_activo = False
+        logger.critical(f"[{request_id}] Fallo crítico en el flujo RAG: {str(exc)}", exc_info=True)
+
+    finally:
+        # 4. Bloque Inquebrantable de Cierre
+        respuesta_final_segura = enmascarar_datos_sensibles(respuesta_final)
+        
+        # Guardado del historial (Write-behind asíncrono)
+        registrar_consulta_sanitizada(chat_id, texto_seguro, respuesta_ia=respuesta_final_segura, request_id=request_id)
+        
+        # Entrega garantizada a Telegram
+        if streaming_activo and message_id:
+            try:
+                enviar_peticion_telegram({'chat_id': chat_id, 'message_id': message_id, 'text': respuesta_final_segura}, 'editMessageText')
+            except Exception:
+                enviar_mensaje_final(chat_id, respuesta_final_segura)
+        else:
+            enviar_mensaje_final(chat_id, respuesta_final_segura)
+
+        # Limpieza de estados
+        redis_client.setex(f"cache_q:{texto_seguro.lower().strip()}", TIEMPO_EXPIRACION_CACHE, respuesta_final_segura)
+        redis_client.delete(key_idempotencia)
+        
+    return "Procesamiento completado con escudo activo"
 
 
 @shared_task
 def procesar_documentos_pendientes():
-    """
-    Satélite Nocturno: Tarea programada (Cron Job) que busca documentos PDF 
-    en estado 'PENDIENTE', los vectoriza en Qdrant y actualiza su estado.
-    """
+    """Satélite Nocturno: Vectorización diferida de PDFs."""
     documentos = DocumentoPendiente.objects.filter(estado='PENDIENTE')
-    
     if not documentos.exists():
-        return "Operación cancelada: No hay documentos pendientes en la base de datos."
+        return "Operación cancelada: No hay documentos pendientes."
         
     for doc in documentos:
         try:
             doc.estado = 'PROCESANDO'
             doc.save()
             
-            ruta_pdf = doc.archivo.path
-            logger.info(
-               "Night satellite ingest started. archivo=%s",
-               doc.nombre_archivo,
-               extra={'chat_id': '-', 'tiempo_ms': 0},
-            )
-             
-            # --- CONEXIÓN AL MOTOR DE INGESTA MASIVA ---
-            vectores_creados = vectorizar_documento(ruta_pdf, doc.nombre_archivo)
-            logger.info(
-                "Night satellite ingest completed. archivo=%s fragmentos=%s",
-                doc.nombre_archivo,
-                vectores_creados,
-                extra={'chat_id': '-', 'tiempo_ms': 0},
-            )
-            # -------------------------------------------
+            logger.info(f"Iniciando vectorización masiva: {doc.nombre_archivo}")
+            vectores_creados = vectorizar_documento(doc.archivo.path, doc.nombre_archivo)
             
             doc.estado = 'COMPLETADO'
             doc.fecha_procesamiento = timezone.now()
             doc.save()
-            
         except Exception as e:
             doc.estado = 'ERROR'
             doc.save()
-            logger.error(
-                "Night satellite ingest failed. archivo=%s error=%s",
-                doc.nombre_archivo,
-                str(e),
-                extra={'chat_id': '-', 'tiempo_ms': 0},
-            )
+            logger.error(f"Fallo en ingesta nocturna de {doc.nombre_archivo}: {str(e)}")
             
-    return f"Ciclo de ingesta finalizado. {documentos.count()} documentos intentados."
+    return f"Ciclo de ingesta finalizado. {documentos.count()} procesados."
+
+
+@shared_task
+def sincronizar_registros_mariadb():
+    """
+    Tarea programada (Beat) que saca los logs de Redis y los inserta 
+    en bloque en MariaDB. Si MariaDB falla, los devuelve a Redis.
+    """
+    lote_maximo = 50
+    logs_raw = []
+    
+    # Extraemos hasta 50 registros de la cola
+    for _ in range(lote_maximo):
+        item = redis_client.rpop("cola_logs_mariadb")
+        if item:
+            logs_raw.append(item)
+        else:
+            break
+            
+    if not logs_raw:
+        return "0 logs pendientes para MariaDB."
+        
+    try:
+        from satelite_telegram.models import RegistroConsulta
+        campos = [field.name for field in RegistroConsulta._meta.get_fields()]
+        
+        nuevos_registros = []
+        for raw in logs_raw:
+            try:
+                datos = json.loads(raw)
+            except Exception:
+                continue
+                
+            kwargs = {}
+            if 'request_id' in campos: kwargs['request_id'] = datos.get('request_id')
+            if 'chat_id' in campos: kwargs['chat_id'] = datos.get('chat_id')
+            
+            # Mapeo dinámico de tu modelo
+            for c in ['consulta', 'texto', 'mensaje', 'texto_usuario', 'pregunta']:
+                if c in campos:
+                    kwargs[c] = datos.get('texto_usuario')
+                    break
+            for c in ['respuesta', 'respuesta_ia', 'respuestaIA', 'resultado', 'texto_respuesta']:
+                if c in campos:
+                    kwargs[c] = datos.get('respuesta_ia')
+                    break
+                    
+            nuevos_registros.append(RegistroConsulta(**kwargs))
+            
+        # Bulk Create: 1 sola transacción a disco duro en vez de 50
+        if nuevos_registros:
+            RegistroConsulta.objects.bulk_create(nuevos_registros)
+            logger.info(f"Write-Behind exitoso: {len(nuevos_registros)} registros volcados a MariaDB.")
+            
+        return f"Volcados {len(nuevos_registros)} registros."
+        
+    except Exception as exc:
+        logger.error(f"Fallo al volcar en MariaDB. Devolviendo a Redis. Error: {str(exc)}")
+        # Si DB colapsa, devolvemos los datos a Redis para no perderlos
+        for raw in logs_raw:
+            redis_client.lpush("cola_logs_mariadb", raw)
+        return "Fallo DB. Registros rescatados en Redis."

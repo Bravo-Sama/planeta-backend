@@ -217,10 +217,16 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_DEFAULT_QUEUE = 'default'
 
-# --- CONFIGURACIÓN CELERY BEAT (SATÉLITE NOCTURNO) ---
+# --- CONFIGURACIÓN CELERY BEAT (SATÉLITE NOCTURNO Y WRITE-BEHIND) ---
 if require_env('ENABLE_CELERY_BEAT').lower() in ('1', 'true', 'yes', 'on'):
     from celery.schedules import crontab
     CELERY_BEAT_SCHEDULE = {
+        # 1. Tolerancia a Fallos: Volcado de registros a MariaDB cada 30 segundos
+        'volcar-logs-mariadb-cada-30s': {
+            'task': 'satelite_telegram.tasks.sincronizar_registros_mariadb',
+            'schedule': 30.0,
+        },
+        # 2. Satélite Nocturno: Vectorización de PDFs pendientes a las 03:00 AM
         'vectorizacion-nocturna-pdfs': {
             'task': 'satelite_telegram.tasks.procesar_documentos_pendientes',
             'schedule': crontab(minute=0, hour=3),

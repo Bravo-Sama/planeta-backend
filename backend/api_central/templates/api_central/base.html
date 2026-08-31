@@ -65,12 +65,12 @@
                 <small class="text-secondary text-uppercase fw-bold">Motor RAG</small>
             </li>
             <li>
-                <a href="#" class="nav-link">
+                <a href="{% url 'subida_documentos' %}" class="nav-link">
                     <i class="bi bi-file-earmark-pdf me-2"></i> Ingesta de Docs
                 </a>
             </li>
             <li>
-                <a href="#" class="nav-link">
+                <a href="{% url 'gestion_rag' %}" class="nav-link">
                     <i class="bi bi-database me-2"></i> Gestión RAG
                 </a>
             </li>
@@ -79,12 +79,17 @@
                 <small class="text-secondary text-uppercase fw-bold">Control IA</small>
             </li>
             <li>
-                <a href="#" class="nav-link">
+                <a href="{% url 'historial_chats' %}" class="nav-link">
                     <i class="bi bi-chat-dots me-2"></i> Historial Chats
                 </a>
             </li>
             <li>
-                <a href="#" class="nav-link">
+                <a href="{% url 'faq_sistema' %}" class="nav-link">
+                    <i class="bi bi-question-circle me-2"></i> FAQ del Sistema
+                </a>
+            </li>
+            <li>
+                <a href="{% url 'configuracion_ia' %}" class="nav-link">
                     <i class="bi bi-gear me-2"></i> Configuración IA
                 </a>
             </li>

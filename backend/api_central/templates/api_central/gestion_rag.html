@@ -1,0 +1,93 @@
+{% extends 'api_central/base.html' %}
+
+{% block title %}Gestión RAG | Admin IA{% endblock %}
+{% block page_title %}Administración del corpus vectorial{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="text-secondary mb-0"><i class="bi bi-database-check me-2"></i>Fragments y documentos indexados</h5>
+            <button class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-arrow-repeat me-1"></i>Sincronizar Qdrant
+            </button>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table align-middle table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Documento</th>
+                        <th>Chunk</th>
+                        <th>Embeddings</th>
+                        <th>Última actualización</th>
+                        <th class="text-end">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>NCh2485_2024.pdf</td>
+                        <td>89 fragmentos</td>
+                        <td>768 dim</td>
+                        <td>31/08/2026 09:15</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-light" title="Auditar"><i class="bi bi-eye"></i></button>
+                            <button class="btn btn-sm btn-light" title="Eliminar"><i class="bi bi-trash text-danger"></i></button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Manual_agua_2023.pdf</td>
+                        <td>143 fragmentos</td>
+                        <td>768 dim</td>
+                        <td>30/08/2026 16:20</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-light" title="Auditar"><i class="bi bi-eye"></i></button>
+                            <button class="btn btn-sm btn-light" title="Eliminar"><i class="bi bi-trash text-danger"></i></button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Resolucion_137.pdf</td>
+                        <td>31 fragmentos</td>
+                        <td>768 dim</td>
+                        <td>29/08/2026 11:40</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-light" title="Auditar"><i class="bi bi-eye"></i></button>
+                            <button class="btn btn-sm btn-light" title="Eliminar"><i class="bi bi-trash text-danger"></i></button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-body">
+                <h6 class="text-secondary">Estado del vector store</h6>
+                <h3 class="mb-0 mt-2">96.4%</h3>
+                <p class="text-muted mb-0">Integridad de índices</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-body">
+                <h6 class="text-secondary">Tiempo medio de búsqueda</h6>
+                <h3 class="mb-0 mt-2">0.8s</h3>
+                <p class="text-muted mb-0">Promedio por consulta</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 h-100">
+            <div class="card-body">
+                <h6 class="text-secondary">Archivos duplicados</h6>
+                <h3 class="mb-0 mt-2">2</h3>
+                <p class="text-muted mb-0">Requieren revisión</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,153 +1,68 @@
-import json
-import logging
 import time
+import logging
+import redis
+from django.conf import settings
 
-logger = logging.getLogger("planeta.breaker")
+logger = logging.getLogger(__name__)
 
+class EstadoBreaker:
+    CERRADO = "CERRADO"          # Tráfico fluye normalmente
+    ABIERTO = "ABIERTO"          # Tráfico bloqueado completamente
+    MEDIO_ABIERTO = "MEDIO_ABIERTO" # Deja pasar 1 petición de prueba
 
-class CircuitOpenException(RuntimeError):
-    """Se lanza cuando un servicio está en estado ABIERTO y se rechaza la consulta."""
-
+class CircuitOpenException(Exception):
+    """Excepción lanzada cuando el circuito rechaza tráfico para proteger el sistema."""
+    pass
 
 class GestorCircuitBreaker:
-    """Circuit Breaker centralizado respaldado por Redis para servicios externos."""
+    """
+    Estructura modular para gestionar la tolerancia a fallos de servicios externos.
+    Diseñado para operar de forma distribuida usando Redis.
+    """
+    def __init__(self, servicio, umbral_fallos=3, ttl_abierto=60):
+        self.servicio = servicio
+        self.umbral_fallos = umbral_fallos
+        self.ttl_abierto = ttl_abierto
+        
+        # Conexión directa al pool de Redis configurado en el entorno
+        self.redis = redis.StrictRedis.from_url(settings.CELERY_BROKER_URL, decode_responses=True)
+        
+        self.key_estado = f"breaker:estado:{servicio}"
+        self.key_fallos = f"breaker:fallos:{servicio}"
+        self.key_timeout = f"breaker:timeout:{servicio}"
 
-    CERRADO = "CERRADO"
-    ABIERTO = "ABIERTO"
-    MEDIO_ABIERTO = "MEDIO_ABIERTO"
+    def allow_request(self, request_id="N/A"):
+        """Evalúa si la petición puede pasar hacia el servicio externo."""
+        estado_actual = self.redis.get(self.key_estado) or EstadoBreaker.CERRADO
 
-    def __init__(self, redis_client, key_prefix="planeta:breaker", ttl_segundos=30, max_fallos=3):
-        self.redis = redis_client
-        self.key_prefix = key_prefix
-        self.ttl_segundos = ttl_segundos
-        self.max_fallos = max_fallos
-
-    def _estado_key(self, servicio):
-        return f"{self.key_prefix}:{servicio}:estado"
-
-    def _fallos_key(self, servicio):
-        return f"{self.key_prefix}:{servicio}:fallos"
-
-    def _snapshot_key(self, servicio):
-        return f"{self.key_prefix}:{servicio}:snapshot"
-
-    def _abierto_ts_key(self, servicio):
-        return f"{self.key_prefix}:{servicio}:abierto_ts"
-
-    def _estado_clúster(self):
-        servicios = ["ollama", "qdrant", "telegram", "redis", "mariadb"]
-        estado = {}
-        for servicio in servicios:
-            estado[servicio] = self.redis.get(self._estado_key(servicio)) or self.CERRADO
-        return estado
-
-    def allow_request(self, servicio):
-        """Retorna True si se puede continuar. Si el circuito está abierto, lanza excepción."""
-        estado = self.redis.get(self._estado_key(servicio)) or self.CERRADO
-        if estado == self.ABIERTO:
-            ts_abierto = self.redis.get(self._abierto_ts_key(servicio))
-            try:
-                ts_abierto = float(ts_abierto) if ts_abierto is not None else 0.0
-            except (TypeError, ValueError):
-                ts_abierto = 0.0
-            if (time.time() - ts_abierto) < self.ttl_segundos:
-                logger.critical(
-                    "Circuit breaker OPEN. servicio=%s estado=%s clúster=%s ttl_segundos=%s",
-                    servicio,
-                    estado,
-                    self._estado_clúster(),
-                    self.ttl_segundos,
-                )
-                raise CircuitOpenException(f"Circuito abierto para {servicio}")
-            self.redis.set(self._estado_key(servicio), self.MEDIO_ABIERTO, ex=self.ttl_segundos)
-            logger.warning(
-                "Circuit breaker transicionó a MEDIO_ABIERTO. servicio=%s clúster=%s",
-                servicio,
-                self._estado_clúster(),
-            )
-            return True
-
-        if estado == self.MEDIO_ABIERTO:
-            logger.warning(
-                "Circuit breaker en MEDIO_ABIERTO. servicio=%s clúster=%s",
-                servicio,
-                self._estado_clúster(),
-            )
-            return True
-
+        if estado_actual == EstadoBreaker.ABIERTO:
+            # Verifica si ya pasó el tiempo de castigo (TTL)
+            if not self.redis.exists(self.key_timeout):
+                self.redis.set(self.key_estado, EstadoBreaker.MEDIO_ABIERTO)
+                logger.info(f"[{request_id}] Breaker {self.servicio} cambia a MEDIO_ABIERTO. Probando conexión.")
+                return True
+            logger.warning(f"[{request_id}] Breaker {self.servicio} ABIERTO. Petición rechazada en capa de red.")
+            raise CircuitOpenException(f"El servicio {self.servicio} está temporalmente inactivo.")
+        
         return True
 
-    def registrar_fallo(self, servicio):
-        """Incrementa el contador de fallos y abre el circuito si excede el umbral."""
-        contador = int(self.redis.get(self._fallos_key(servicio)) or 0) + 1
-        self.redis.set(self._fallos_key(servicio), contador, ex=self.ttl_segundos)
+    def registrar_fallo(self, request_id="N/A"):
+        """Registra un fallo. Si supera el umbral, abre el circuito."""
+        fallos = self.redis.incr(self.key_fallos)
+        
+        if fallos >= self.umbral_fallos:
+            self.redis.set(self.key_estado, EstadoBreaker.ABIERTO)
+            self.redis.setex(self.key_timeout, self.ttl_abierto, "bloqueado")
+            logger.critical(f"[{request_id}] Breaker {self.servicio} ABIERTO tras {fallos} fallos consecutivos.")
 
-        if contador >= self.max_fallos:
-            self.redis.set(self._estado_key(servicio), self.ABIERTO, ex=self.ttl_segundos)
-            self.redis.set(self._abierto_ts_key(servicio), time.time(), ex=self.ttl_segundos)
-            logger.critical(
-                "Circuit breaker abierto por fallos consecutivos. servicio=%s contador=%s clúster=%s",
-                servicio,
-                contador,
-                self._estado_clúster(),
-            )
-        else:
-            logger.warning(
-                "Fallo registrado. servicio=%s fallos=%s clúster=%s",
-                servicio,
-                contador,
-                self._estado_clúster(),
-            )
+    def registrar_exito(self, request_id="N/A"):
+        """Resetea los contadores de fallo al detectar una conexión exitosa."""
+        estado_actual = self.redis.get(self.key_estado)
+        if estado_actual != EstadoBreaker.CERRADO:
+            logger.info(f"[{request_id}] Breaker {self.servicio} recuperado. Cambiando a CERRADO.")
+        
+        self.redis.set(self.key_estado, EstadoBreaker.CERRADO)
+        self.redis.delete(self.key_fallos)
+        self.redis.delete(self.key_timeout)
 
-    def registrar_exito(self, servicio):
-        """Reinicia el contador de fallos y devuelve el servicio a CERRADO."""
-        self.redis.delete(self._fallos_key(servicio))
-        self.redis.set(self._estado_key(servicio), self.CERRADO, ex=self.ttl_segundos)
-        self.redis.delete(self._abierto_ts_key(servicio))
-        logger.info(
-            "Circuit breaker cerrado. servicio=%s clúster=%s",
-            servicio,
-            self._estado_clúster(),
-        )
-
-    def get_state(self, servicio):
-        return self.redis.get(self._estado_key(servicio)) or self.CERRADO
-
-    def should_bounce(self, servicio, ok):
-        if not ok:
-            self.registrar_fallo(servicio)
-            return True
-        self.registrar_exito(servicio)
-        return False
-
-
-class CircuitBreaker(GestorCircuitBreaker):
-    """Alias de compatibilidad para código previo al refactor."""
-
-    def __init__(self, redis_client, key_prefix="planeta:breaker", ttl_seconds=30, max_fallos=3):
-        super().__init__(redis_client, key_prefix=key_prefix, ttl_segundos=ttl_seconds, max_fallos=max_fallos)
-
-    def allow_request(self, servicio=None):
-        if servicio is None:
-            servicio = "rag"
-        return super().allow_request(servicio)
-
-    def record_failure(self, qdrant_ok, ollama_ok):
-        for servicio, ok in {"qdrant": qdrant_ok, "ollama": ollama_ok}.items():
-            if not ok:
-                self.registrar_fallo(servicio)
-
-    def record_success(self):
-        for servicio in ("qdrant", "ollama"):
-            self.registrar_exito(servicio)
-
-    def set_half_open(self):
-        for servicio in ("qdrant", "ollama"):
-            self.redis.set(self._estado_key(servicio), self.MEDIO_ABIERTO, ex=self.ttl_segundos)
-
-    def should_bounce(self, qdrant_ok, ollama_ok):
-        if not qdrant_ok or not ollama_ok:
-            self.record_failure(qdrant_ok, ollama_ok)
-            return True
-        self.record_success()
-        return False
+        

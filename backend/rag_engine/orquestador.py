@@ -2,22 +2,35 @@
 
 Mantiene un contrato de salida inmutable: todas las rutas devuelven un generador.
 La decisión de consulta se envía a RAG o a datos operativos y nunca se adivina
-el tipo de retorno del consumidor.
+el tipo de retorno del consumidor. Integra tolerancia a fallos en el enrutamiento.
 """
 
 import logging
-
+import uuid
 import requests
+import redis
 from django.conf import settings
 
 from .buscador import hacer_pregunta
-from .sanitizador import limpiar_entrada
+from .breaker import GestorCircuitBreaker, CircuitOpenException
+from .sanitizador import validar_prompt_seguro, PromptInjectionException
 
 logger = logging.getLogger(__name__)
 
 OLLAMA_BASE_URL = settings.OLLAMA_BASE_URL
 OLLAMA_CHAT_URL = f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate"
 MODELO_CLASIFICACION = settings.MODELO_CLASIFICACION
+
+# Conexión Redis compartida
+redis_client = redis.Redis(
+    host=settings.REDIS_HOST,
+    port=settings.REDIS_PORT,
+    db=1,
+    decode_responses=True,
+)
+
+# Breaker específico para tareas de clasificación. Aisla el orquestador de las caídas de Ollama.
+breaker_clasificador = GestorCircuitBreaker(servicio="clasificador", umbral_fallos=3, ttl_abierto=30)
 
 
 def _mensaje_ambiguedad():
@@ -35,105 +48,101 @@ def _mensaje_operacional_en_desarrollo():
     )
 
 
-def clasificar_intencion(pregunta_usuario):
+def clasificar_intencion(pregunta_usuario, request_id="N/A"):
     """Clasifica la consulta en NORMATIVA, OPERACIONAL o AMBIGUO usando Llama 3."""
-    pregunta_limpia = limpiar_entrada(pregunta_usuario)
-    if pregunta_limpia.startswith("🚫"):
-        logger.warning("Prompt injection rejected before LLM classification. query_len=%s", len(str(pregunta_usuario)))
-        return "SEGURIDAD"
-
-    prompt = f"""
-    Eres un clasificador de consultas del sistema Planeta.
-    Tu única tarea es decidir si la consulta requiere:
-    - NORMATIVA: contenido legal, normativas, resoluciones, requisitos regulatorios, PDFs de Aguas Décimas.
-    - OPERACIONAL: métricas, estado del servicio, datos estructurados, reportes, MariaDB, uptime, disponibilidad, incidentes, salud del sistema.
-
-    REGLAS ESTRICTAS:
-    1. Responde SOLO con una de estas tres palabras exactas: NORMATIVA, OPERACIONAL o AMBIGUO.
-    2. Sin comillas, sin explicación, sin texto extra.
-    3. Si la pregunta es ambigua, responde AMBIGUO.
-
-    Pregunta del usuario:
-    {pregunta_limpia}
-    """
-
-    payload = {
-        "model": MODELO_CLASIFICACION,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0,
-            "num_predict": 5,
-        },
-    }
-
     try:
+        # 1. Verificación del Breaker
+        breaker_clasificador.allow_request(request_id)
+        
+        prompt = f"""
+        Eres un clasificador de consultas del sistema Planeta.
+        Tu única tarea es decidir si la consulta requiere:
+        - NORMATIVA: contenido legal, normativas, resoluciones, requisitos regulatorios, PDFs de Aguas Décimas.
+        - OPERACIONAL: métricas, estado del servicio, datos estructurados, reportes, MariaDB, uptime, disponibilidad, incidentes, salud del sistema.
+
+        REGLAS ESTRICTAS:
+        1. Responde SOLO con una de estas tres palabras exactas: NORMATIVA, OPERACIONAL o AMBIGUO.
+        2. Sin comillas, sin explicación, sin texto extra.
+        3. Si la pregunta es ambigua, responde AMBIGUO.
+
+        Pregunta del usuario:
+        {pregunta_usuario}
+        """
+
+        payload = {
+            "model": MODELO_CLASIFICACION,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0,
+                "num_predict": 5,
+            },
+        }
+
+        # 2. Petición al LLM
         respuesta = requests.post(OLLAMA_CHAT_URL, json=payload, timeout=(2, 5))
-        if respuesta.status_code != 200:
-            logger.error(
-                "LLM classification returned non-200 status. status=%s trace=[ERR_LLM_CLASS_TIMEOUT]",
-                respuesta.status_code,
-            )
-            return "AMBIGUO"
-
+        respuesta.raise_for_status()
+        
+        # 3. Éxito: Reseteamos el breaker
+        breaker_clasificador.registrar_exito(request_id)
+        
+        # 4. Parseo de respuesta
         texto = respuesta.json().get("response", "").strip().upper()
-        if texto in {"NORMATIVA", "OPERACIONAL", "AMBIGUO"}:
-            return texto
-
-        logger.error(
-            "LLM classification response malformed. response=%s trace=[ERR_LLM_CLASS_PARSE]",
-            texto or "<empty>",
-        )
+        
+        if any(keyword in texto for keyword in ["NORMATIVA", "OPERACIONAL"]):
+            return "NORMATIVA" if "NORMATIVA" in texto else "OPERACIONAL"
+            
         return "AMBIGUO"
 
+    except CircuitOpenException:
+        logger.warning(f"[{request_id}] LLM Clasificador Aislado por Breaker. Degradando a AMBIGUO.")
+        return "AMBIGUO"
+        
     except requests.exceptions.RequestException as exc:
-        logger.error(
-            "LLM classification request failed. error=%s trace=[ERR_LLM_CLASS_TIMEOUT]",
-            str(exc),
-        )
+        breaker_clasificador.registrar_fallo(request_id)
+        logger.error(f"[{request_id}] Error de red LLM classification. error={str(exc)} trace=[ERR_LLM_CLASS_NET]")
         return "AMBIGUO"
+        
     except Exception as exc:
-        logger.error(
-            "Unexpected LLM classification failure. error=%s trace=[ERR_LLM_CLASS_PARSE]",
-            str(exc),
-        )
+        breaker_clasificador.registrar_fallo(request_id)
+        logger.error(f"[{request_id}] Unexpected LLM classification failure. error={str(exc)} trace=[ERR_LLM_CLASS_INT]")
         return "AMBIGUO"
 
 
-def procesar_consulta_orquestada(pregunta_usuario, chat_id):
+def procesar_consulta_orquestada(pregunta_usuario, chat_id, request_id=None):
     """Orquesta la consulta y siempre devuelve un generador.
 
     Esta función preserva un contrato inmutable para el consumidor: nunca emite un
     string plano fuera del flujo iterable. Si la ruta es RAG, usa `yield from`; si
     es operativa o ambigua, usa `yield` con el mensaje final ya empaquetado.
     """
-    consulta_limpia = limpiar_entrada(pregunta_usuario)
-    if consulta_limpia.startswith("🚫"):
-        logger.warning(
-            "Prompt injection blocked before routing. chat_id=%s trace=security_guard",
-            chat_id,
-        )
-        yield consulta_limpia
+    request_id = request_id or str(uuid.uuid4())
+    
+    try:
+        # 1. Defensa Perimetral Anti-Inyección
+        validar_prompt_seguro(pregunta_usuario)
+        
+        # 2. Clasificación (Silenciosa y a prueba de fallos)
+        clasificacion = clasificar_intencion(pregunta_usuario, request_id)
+
+        # 3. Enrutamiento Inmutable
+        if clasificacion == "NORMATIVA":
+            yield from hacer_pregunta(pregunta_usuario, chat_id, request_id)
+            return
+
+        if clasificacion == "OPERACIONAL":
+            yield _mensaje_operacional_en_desarrollo()
+            return
+
+        yield _mensaje_ambiguedad()
         return
 
-    clasificacion = clasificar_intencion(consulta_limpia)
-
-    if clasificacion == "NORMATIVA":
-        yield from hacer_pregunta(consulta_limpia)
+    except PromptInjectionException as exc:
+        logger.warning(f"[{request_id}] Prompt injection blocked before routing. chat_id={chat_id} trace=security_guard")
+        yield "La solicitud viola las políticas de seguridad del sistema y no puede ser procesada. [ERR_SEC_01]"
         return
-
-    if clasificacion == "OPERACIONAL":
-        yield _mensaje_operacional_en_desarrollo()
+        
+    except Exception as exc:
+        logger.critical(f"[{request_id}] Colapso absoluto en orquestador central: {str(exc)}", exc_info=True)
+        yield "El núcleo del sistema experimenta intermitencias graves. Por favor, intenta en unos minutos. [ERR_ORQ_CRITICAL]"
         return
-
-    if clasificacion == "SEGURIDAD":
-        yield consulta_limpia
-        return
-
-    logger.warning(
-        "LLM classification fallback triggered. state=AMBIGUO trace=[ERR_LLM_CLASS_TIMEOUT] user_input_len=%s chat_id=%s",
-        len(consulta_limpia),
-        chat_id,
-    )
-    yield _mensaje_ambiguedad()
-    return

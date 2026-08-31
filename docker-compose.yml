@@ -30,17 +30,18 @@ services:
         max_attempts: 5
         window: 120s
 
-  # 1.1. ProxySQL local para desacoplar Django y Celery del puerto de MariaDB
+  # 1.1. ProxySQL local (Bypass temporal para la Beta 1.0)
   proxysql:
-    image: proxysql/proxysql:2.5
+    image: proxysql/proxysql:latest
     container_name: planeta_db_proxy
     depends_on:
       - db
     ports:
       - "6033:6033"
-    volumes:
-      - ./proxysql.cnf:/etc/proxysql.cnf:ro
-    command: ["--config-file=/etc/proxysql.cnf"]
+    # VOLUMEN COMENTADO: Evita el error "no such file or directory" si el archivo no existe localmente
+    # volumes:
+    #   - ./proxysql.cnf:/etc/proxysql.cnf:ro
+    # command: proxysql -f -c /etc/proxysql.cnf
     restart: on-failure:5
     oom_score_adj: 200
     deploy:
@@ -118,7 +119,7 @@ services:
       - "8000"
     depends_on:
       - db
-      - proxysql
+      # - proxysql (Comentado para conectar directo a DB temporalmente)
       - redis
       - qdrant
     restart: on-failure:5
@@ -174,7 +175,7 @@ services:
     depends_on:
       - redis
       - db
-      - proxysql
+      # - proxysql (Comentado para conectar directo a DB)
       - qdrant
     restart: on-failure:5
     oom_score_adj: 250
@@ -227,4 +228,3 @@ volumes:
   mariadb_data:
   redis_data:
   qdrant_data:
-  
